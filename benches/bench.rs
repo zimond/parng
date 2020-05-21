@@ -25,7 +25,10 @@ mod bench {
         }
 
         total_elapsed_time /= RUNS as u64;
-        println!("Mean elapsed time: {}ms", total_elapsed_time as f32 / 1_000_000.0);
+        println!(
+            "Mean elapsed time: {}ms",
+            total_elapsed_time as f32 / 1_000_000.0
+        );
     }
 }
 
@@ -38,4 +41,3 @@ fn main() {
 fn main() {
     println!("Compile with the `bench` feature to use the benchmarking tool.");
 }
-

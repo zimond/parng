@@ -6,12 +6,14 @@
 
 #![allow(non_camel_case_types)]
 
-use PngError;
-use imageloader::{self, DataProvider, ImageLoader, InterlacingInfo, LevelOfDetail, LoadProgress};
-use imageloader::{ScanlinesForPrediction, ScanlinesForRgbaConversion};
-use libc::{self, FILE, SEEK_CUR, SEEK_END, SEEK_SET, c_long, c_void, size_t, uintptr_t};
-use metadata::{ColorType, InterlaceMethod, Metadata};
-use simple::Image;
+use crate::imageloader::{
+    self, DataProvider, ImageLoader, InterlacingInfo, LevelOfDetail, LoadProgress,
+};
+use crate::imageloader::{ScanlinesForPrediction, ScanlinesForRgbaConversion};
+use crate::metadata::{ColorType, InterlaceMethod, Metadata};
+use crate::simple::Image;
+use crate::PngError;
+use libc::{self, c_long, c_void, size_t, uintptr_t, FILE, SEEK_CUR, SEEK_END, SEEK_SET};
 use std::io::{self, Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
 use std::mem;
 use std::ptr;
@@ -56,6 +58,7 @@ pub const PARNG_ERROR_INVALID_METADATA: u32 = 2;
 pub const PARNG_ERROR_INVALID_SCANLINE_PREDICTOR: u32 = 3;
 pub const PARNG_ERROR_ENTROPY_DECODING_ERROR: u32 = 4;
 pub const PARNG_ERROR_NO_DATA_PROVIDER: u32 = 5;
+pub const PARNG_ERROR_DECOMPRESS: u32 = 6;
 
 pub const PARNG_FILTER_METHOD_ADAPTIVE: u32 = 0;
 
@@ -79,16 +82,18 @@ pub const PARNG_SEEK_FROM_END: u32 = 2;
 /// violate memory safety.
 #[repr(C)]
 pub struct parng_reader {
-    read: unsafe extern "C" fn(buffer: *mut u8,
-                               buffer_length: size_t,
-                               bytes_read: *mut size_t,
-                               user_data: *mut c_void)
-                               -> parng_io_error,
-    seek: unsafe extern "C" fn(position: i64,
-                               from: parng_seek_from,
-                               new_position: *mut u64,
-                               user_data: *mut c_void)
-                               -> parng_io_error,
+    read: unsafe extern "C" fn(
+        buffer: *mut u8,
+        buffer_length: size_t,
+        bytes_read: *mut size_t,
+        user_data: *mut c_void,
+    ) -> parng_io_error,
+    seek: unsafe extern "C" fn(
+        position: i64,
+        from: parng_seek_from,
+        new_position: *mut u64,
+        user_data: *mut c_void,
+    ) -> parng_io_error,
     user_data: *mut c_void,
 }
 
@@ -96,13 +101,18 @@ impl Read for parng_reader {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         unsafe {
             let mut bytes_read = 0;
-            match (self.read)(buffer.as_mut_ptr(), buffer.len(), &mut bytes_read, self.user_data) {
+            match (self.read)(
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut bytes_read,
+                self.user_data,
+            ) {
                 PARNG_SUCCESS => Ok(bytes_read),
                 PARNG_ERROR_IO => Err(Error::new(ErrorKind::Other, "`parng` reader error")),
-                _ => {
-                    panic!("`parng_reader::read()` must return either `PARNG_SUCCESS` or \
-                            `PARNG_ERROR_IO`!")
-                }
+                _ => panic!(
+                    "`parng_reader::read()` must return either `PARNG_SUCCESS` or \
+                            `PARNG_ERROR_IO`!"
+                ),
             }
         }
     }
@@ -120,10 +130,10 @@ impl Seek for parng_reader {
             match (self.seek)(position, seek_from, &mut new_position, self.user_data) {
                 PARNG_SUCCESS => Ok(new_position),
                 PARNG_ERROR_IO => Err(Error::new(ErrorKind::Other, "`parng` reader error")),
-                _ => {
-                    panic!("`parng_reader::seek()` must return either `PARNG_SUCCESS` or \
-                            `PARNG_ERROR_IO`!")
-                }
+                _ => panic!(
+                    "`parng_reader::seek()` must return either `PARNG_SUCCESS` or \
+                            `PARNG_ERROR_IO`!"
+                ),
             }
         }
     }
@@ -136,12 +146,14 @@ struct FileReader {
 impl Read for FileReader {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         unsafe {
-            let nread = libc::fread(buffer.as_mut_ptr() as *mut c_void,
-                                    1,
-                                    buffer.len(),
-                                    self.file);
+            let nread = libc::fread(
+                buffer.as_mut_ptr() as *mut c_void,
+                1,
+                buffer.len(),
+                self.file,
+            );
             if nread > 0 {
-                return Ok(nread)
+                return Ok(nread);
             }
             if libc::ferror(self.file) == 0 {
                 Ok(0)
@@ -201,24 +213,25 @@ pub struct parng_image {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct parng_data_provider {
-    fetch_scanlines_for_prediction: extern "C" fn(reference_scanline: i32,
-                                                  current_scanline: u32,
-                                                  lod: parng_level_of_detail,
-                                                  indexed: i32,
-                                                  scanlines: *mut parng_scanlines_for_prediction,
-                                                  user_data: *mut c_void),
-    prediction_complete_for_scanline: extern "C" fn(scanline: u32,
-                                                    lod: parng_level_of_detail,
-                                                    user_data: *mut c_void),
-    fetch_scanlines_for_rgba_conversion:
-        extern "C" fn(scanline: u32,
-                      lod: parng_level_of_detail,
-                      indexed: i32,
-                      scanlines: *mut parng_scanlines_for_rgba_conversion,
-                      user_data: *mut c_void),
-    rgba_conversion_complete_for_scanline: extern "C" fn(scanline: u32,
-                                                         lod: parng_level_of_detail,
-                                                         user_data: *mut c_void),
+    fetch_scanlines_for_prediction: extern "C" fn(
+        reference_scanline: i32,
+        current_scanline: u32,
+        lod: parng_level_of_detail,
+        indexed: i32,
+        scanlines: *mut parng_scanlines_for_prediction,
+        user_data: *mut c_void,
+    ),
+    prediction_complete_for_scanline:
+        extern "C" fn(scanline: u32, lod: parng_level_of_detail, user_data: *mut c_void),
+    fetch_scanlines_for_rgba_conversion: extern "C" fn(
+        scanline: u32,
+        lod: parng_level_of_detail,
+        indexed: i32,
+        scanlines: *mut parng_scanlines_for_rgba_conversion,
+        user_data: *mut c_void,
+    ),
+    rgba_conversion_complete_for_scanline:
+        extern "C" fn(scanline: u32, lod: parng_level_of_detail, user_data: *mut c_void),
     finished: extern "C" fn(user_data: *mut c_void),
     user_data: *mut c_void,
 }
@@ -226,12 +239,13 @@ pub struct parng_data_provider {
 unsafe impl Send for parng_data_provider {}
 
 impl DataProvider for parng_data_provider {
-    fn fetch_scanlines_for_prediction<'a>(&'a mut self,
-                                          reference_scanline: Option<u32>,
-                                          current_scanline: u32,
-                                          lod: LevelOfDetail,
-                                          indexed: bool)
-                                          -> ScanlinesForPrediction<'a> {
+    fn fetch_scanlines_for_prediction<'a>(
+        &'a mut self,
+        reference_scanline: Option<u32>,
+        current_scanline: u32,
+        lod: LevelOfDetail,
+        indexed: bool,
+    ) -> ScanlinesForPrediction<'a> {
         unsafe {
             let mut c_scanlines_for_prediction = parng_scanlines_for_prediction {
                 reference_scanline: ptr::null_mut(),
@@ -245,17 +259,15 @@ impl DataProvider for parng_data_provider {
                 Some(reference_scanline) => reference_scanline as i32,
             };
             let c_lod = level_of_detail_to_c_level_of_detail(lod);
-            let c_indexed = if indexed {
-                1
-            } else {
-                0
-            };
-            (self.fetch_scanlines_for_prediction)(c_reference_scanline,
-                                                  current_scanline,
-                                                  c_lod,
-                                                  c_indexed,
-                                                  &mut c_scanlines_for_prediction,
-                                                  self.user_data);
+            let c_indexed = if indexed { 1 } else { 0 };
+            (self.fetch_scanlines_for_prediction)(
+                c_reference_scanline,
+                current_scanline,
+                c_lod,
+                c_indexed,
+                &mut c_scanlines_for_prediction,
+                self.user_data,
+            );
             c_scanlines_for_prediction_to_scanlines_for_prediction(&c_scanlines_for_prediction)
         }
     }
@@ -265,34 +277,34 @@ impl DataProvider for parng_data_provider {
         (self.prediction_complete_for_scanline)(scanline, c_lod, self.user_data);
     }
 
-    fn fetch_scanlines_for_rgba_conversion<'a>(&'a mut self,
-                                               scanline: u32,
-                                               lod: LevelOfDetail,
-                                               indexed: bool)
-                                               -> ScanlinesForRgbaConversion<'a> {
-       unsafe {
-           let mut c_scanlines_for_rgba_conversion = parng_scanlines_for_rgba_conversion {
-               rgba_scanline: ptr::null_mut(),
-               rgba_scanline_length: 0,
-               indexed_scanline: ptr::null(),
-               indexed_scanline_length: 0,
-               rgba_stride: 0,
-               indexed_stride: 0,
-           };
-           let c_lod = level_of_detail_to_c_level_of_detail(lod);
-           let c_indexed = if indexed {
-               1
-           } else {
-               0
-           };
-           (self.fetch_scanlines_for_rgba_conversion)(scanline,
-                                                      c_lod,
-                                                      c_indexed,
-                                                      &mut c_scanlines_for_rgba_conversion,
-                                                      self.user_data);
-           c_scanlines_for_rgba_conversion_to_scanlines_for_rgba_conversion(
-               &c_scanlines_for_rgba_conversion)
-       }
+    fn fetch_scanlines_for_rgba_conversion<'a>(
+        &'a mut self,
+        scanline: u32,
+        lod: LevelOfDetail,
+        indexed: bool,
+    ) -> ScanlinesForRgbaConversion<'a> {
+        unsafe {
+            let mut c_scanlines_for_rgba_conversion = parng_scanlines_for_rgba_conversion {
+                rgba_scanline: ptr::null_mut(),
+                rgba_scanline_length: 0,
+                indexed_scanline: ptr::null(),
+                indexed_scanline_length: 0,
+                rgba_stride: 0,
+                indexed_stride: 0,
+            };
+            let c_lod = level_of_detail_to_c_level_of_detail(lod);
+            let c_indexed = if indexed { 1 } else { 0 };
+            (self.fetch_scanlines_for_rgba_conversion)(
+                scanline,
+                c_lod,
+                c_indexed,
+                &mut c_scanlines_for_rgba_conversion,
+                self.user_data,
+            );
+            c_scanlines_for_rgba_conversion_to_scanlines_for_rgba_conversion(
+                &c_scanlines_for_rgba_conversion,
+            )
+        }
     }
 
     fn rgba_conversion_complete_for_scanline(&mut self, scanline: u32, lod: LevelOfDetail) {
@@ -323,8 +335,10 @@ pub struct parng_interlacing_info {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn parng_image_load(c_image: *mut parng_image, reader: *mut parng_reader)
-                                          -> parng_error {
+pub unsafe extern "C" fn parng_image_load(
+    c_image: *mut parng_image,
+    reader: *mut parng_reader,
+) -> parng_error {
     match Image::load(&mut *reader) {
         Err(error) => png_error_to_c_error(error),
         Ok(image) => {
@@ -335,11 +349,11 @@ pub unsafe extern "C" fn parng_image_load(c_image: *mut parng_image, reader: *mu
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn parng_image_load_from_file(c_image: *mut parng_image, file: *mut FILE)
-                                                    -> parng_error {
-    let mut file_reader = FileReader {
-        file: file,
-    };
+pub unsafe extern "C" fn parng_image_load_from_file(
+    c_image: *mut parng_image,
+    file: *mut FILE,
+) -> parng_error {
+    let mut file_reader = FileReader { file: file };
     match Image::load(&mut file_reader) {
         Err(error) => png_error_to_c_error(error),
         Ok(image) => {
@@ -350,10 +364,11 @@ pub unsafe extern "C" fn parng_image_load_from_file(c_image: *mut parng_image, f
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn parng_image_load_from_memory(c_image: *mut parng_image,
-                                                      bytes: *const u8,
-                                                      length: size_t)
-                                                      -> parng_error {
+pub unsafe extern "C" fn parng_image_load_from_memory(
+    c_image: *mut parng_image,
+    bytes: *const u8,
+    length: size_t,
+) -> parng_error {
     match Image::load(&mut Cursor::new(slice::from_raw_parts(bytes, length))) {
         Err(error) => png_error_to_c_error(error),
         Ok(image) => {
@@ -365,59 +380,65 @@ pub unsafe extern "C" fn parng_image_load_from_memory(c_image: *mut parng_image,
 
 #[no_mangle]
 pub unsafe extern "C" fn parng_image_destroy(image: *mut parng_image) {
-    drop(Vec::from_raw_parts((*image).pixels,
-                             (*image).stride * (*image).height as usize,
-                             (*image).capacity))
+    drop(Vec::from_raw_parts(
+        (*image).pixels,
+        (*image).stride * (*image).height as usize,
+        (*image).capacity,
+    ))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn parng_image_loader_create(image_loader: *mut *mut parng_image_loader) {
     let new_image_loader = ImageLoader::new();
-    *image_loader = mem::transmute::<Box<ImageLoader>,
-                                     *mut ImageLoader>(Box::new(new_image_loader));
+    *image_loader =
+        mem::transmute::<Box<ImageLoader>, *mut ImageLoader>(Box::new(new_image_loader));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn parng_image_loader_destroy(image_loader: *mut parng_image_loader) {
-    drop(mem::transmute::<*mut parng_image_loader, Box<ImageLoader>>(image_loader))
+    drop(mem::transmute::<*mut parng_image_loader, Box<ImageLoader>>(
+        image_loader,
+    ))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn parng_image_loader_add_data(image_loader: *mut parng_image_loader,
-                                                     reader: *mut parng_reader,
-                                                     result: *mut parng_load_progress)
-                                                     -> parng_error {
+pub unsafe extern "C" fn parng_image_loader_add_data(
+    image_loader: *mut parng_image_loader,
+    reader: *mut parng_reader,
+    result: *mut parng_load_progress,
+) -> parng_error {
     match (*image_loader).add_data(&mut *reader) {
         Ok(load_progress) => {
             *result = load_progress_to_c_result(load_progress);
             PARNG_SUCCESS
         }
-        Err(err) => png_error_to_c_error(err)
+        Err(err) => png_error_to_c_error(err),
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn parng_image_loader_wait_until_finished(
-        image_loader: *mut parng_image_loader)
-        -> parng_error {
+    image_loader: *mut parng_image_loader,
+) -> parng_error {
     match (*image_loader).wait_until_finished() {
         Ok(()) => PARNG_SUCCESS,
         Err(err) => png_error_to_c_error(err),
     }
 }
 
-
 #[no_mangle]
 pub unsafe extern "C" fn parng_image_loader_set_data_provider(
-        image_loader: *mut parng_image_loader,
-        data_provider: *mut parng_data_provider) {
+    image_loader: *mut parng_image_loader,
+    data_provider: *mut parng_data_provider,
+) {
     (*image_loader).set_data_provider(Box::new(*data_provider))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn parng_image_loader_get_metadata(image_loader: *mut parng_image_loader,
-                                                         metadata_result: *mut parng_metadata)
-                                                         -> u32 {
+pub unsafe extern "C" fn parng_image_loader_get_metadata(
+    image_loader: *mut parng_image_loader,
+    metadata_result: *mut parng_metadata,
+) -> u32 {
     match *(*image_loader).metadata() {
         None => 0,
         Some(ref metadata) => {
@@ -434,10 +455,11 @@ pub unsafe extern "C" fn parng_image_loader_align(address: uintptr_t) -> uintptr
 
 #[no_mangle]
 pub unsafe extern "C" fn parng_interlacing_info_init(
-        interlacing_info: *mut parng_interlacing_info,
-        y: u32,
-        color_depth: u8,
-        lod: parng_level_of_detail) {
+    interlacing_info: *mut parng_interlacing_info,
+    y: u32,
+    color_depth: u8,
+    lod: parng_level_of_detail,
+) {
     let info = InterlacingInfo::new(y, color_depth, c_level_of_detail_to_level_of_detail(lod));
     (*interlacing_info).y = info.y;
     (*interlacing_info).stride = info.stride;
@@ -451,6 +473,7 @@ fn png_error_to_c_error(err: PngError) -> parng_error {
         PngError::InvalidScanlinePredictor(_) => PARNG_ERROR_INVALID_SCANLINE_PREDICTOR,
         PngError::EntropyDecodingError => PARNG_ERROR_ENTROPY_DECODING_ERROR,
         PngError::NoDataProvider => PARNG_ERROR_NO_DATA_PROVIDER,
+        PngError::Decompress(_) => PARNG_ERROR_DECOMPRESS,
     }
 }
 
@@ -482,38 +505,49 @@ fn c_level_of_detail_to_level_of_detail(c_lod: parng_level_of_detail) -> LevelOf
 }
 
 unsafe fn c_scanlines_for_prediction_to_scanlines_for_prediction(
-        c_scanlines_for_prediction: *const parng_scanlines_for_prediction)
-        -> ScanlinesForPrediction<'static> {
+    c_scanlines_for_prediction: *const parng_scanlines_for_prediction,
+) -> ScanlinesForPrediction<'static> {
     ScanlinesForPrediction {
         reference_scanline: if (*c_scanlines_for_prediction).reference_scanline.is_null() {
             None
         } else {
             Some(slice::from_raw_parts_mut(
-                    (*c_scanlines_for_prediction).reference_scanline,
-                    (*c_scanlines_for_prediction).reference_scanline_length))
+                (*c_scanlines_for_prediction).reference_scanline,
+                (*c_scanlines_for_prediction).reference_scanline_length,
+            ))
         },
         current_scanline: slice::from_raw_parts_mut(
-                              (*c_scanlines_for_prediction).current_scanline,
-                              (*c_scanlines_for_prediction).current_scanline_length),
+            (*c_scanlines_for_prediction).current_scanline,
+            (*c_scanlines_for_prediction).current_scanline_length,
+        ),
         stride: (*c_scanlines_for_prediction).stride,
     }
 }
 
 unsafe fn c_scanlines_for_rgba_conversion_to_scanlines_for_rgba_conversion(
-        c_scanlines_for_rgba_conversion: *const parng_scanlines_for_rgba_conversion)
-         -> ScanlinesForRgbaConversion<'static> {
+    c_scanlines_for_rgba_conversion: *const parng_scanlines_for_rgba_conversion,
+) -> ScanlinesForRgbaConversion<'static> {
     ScanlinesForRgbaConversion {
         rgba_scanline: slice::from_raw_parts_mut(
-                           (*c_scanlines_for_rgba_conversion).rgba_scanline,
-                           (*c_scanlines_for_rgba_conversion).rgba_scanline_length),
-        indexed_scanline: if (*c_scanlines_for_rgba_conversion).indexed_scanline.is_null() {
+            (*c_scanlines_for_rgba_conversion).rgba_scanline,
+            (*c_scanlines_for_rgba_conversion).rgba_scanline_length,
+        ),
+        indexed_scanline: if (*c_scanlines_for_rgba_conversion)
+            .indexed_scanline
+            .is_null()
+        {
             None
         } else {
-            Some(slice::from_raw_parts((*c_scanlines_for_rgba_conversion).indexed_scanline,
-                                       (*c_scanlines_for_rgba_conversion).indexed_scanline_length))
+            Some(slice::from_raw_parts(
+                (*c_scanlines_for_rgba_conversion).indexed_scanline,
+                (*c_scanlines_for_rgba_conversion).indexed_scanline_length,
+            ))
         },
         rgba_stride: (*c_scanlines_for_rgba_conversion).rgba_stride,
-        indexed_stride: if (*c_scanlines_for_rgba_conversion).indexed_scanline.is_null() {
+        indexed_stride: if (*c_scanlines_for_rgba_conversion)
+            .indexed_scanline
+            .is_null()
+        {
             None
         } else {
             Some((*c_scanlines_for_rgba_conversion).indexed_stride)
@@ -542,8 +576,9 @@ fn color_type_to_c_color_type(color_type: ColorType) -> parng_color_type {
     }
 }
 
-fn interlace_method_to_c_interlace_method(interlace_method: InterlaceMethod)
-                                          -> parng_interlace_method {
+fn interlace_method_to_c_interlace_method(
+    interlace_method: InterlaceMethod,
+) -> parng_interlace_method {
     match interlace_method {
         InterlaceMethod::Disabled => PARNG_INTERLACE_METHOD_NONE,
         InterlaceMethod::Adam7 => PARNG_INTERLACE_METHOD_ADAM7,
@@ -562,4 +597,3 @@ unsafe fn image_to_c_image(mut image: Image) -> parng_image {
     mem::forget(image.pixels);
     c_image
 }
-

@@ -2,7 +2,7 @@
 //!
 //! This code is derived from code in the `immeta` library: https://github.com/netvl/immeta
 
-use PngError;
+use crate::PngError;
 use byteorder::{self, BigEndian, ByteOrder, ReadBytesExt};
 use std::io::Read;
 
@@ -30,7 +30,7 @@ pub enum ColorType {
     Rgb,
     Indexed,
     GrayscaleAlpha,
-    RgbAlpha
+    RgbAlpha,
 }
 
 const CT_GRAYSCALE: u8 = 0;
@@ -42,12 +42,12 @@ const CT_RGB_ALPHA: u8 = 6;
 impl ColorType {
     fn from_u8(n: u8) -> Option<ColorType> {
         match n {
-            CT_GRAYSCALE       => Some(ColorType::Grayscale),
-            CT_RGB             => Some(ColorType::Rgb),
-            CT_INDEXED         => Some(ColorType::Indexed),
+            CT_GRAYSCALE => Some(ColorType::Grayscale),
+            CT_RGB => Some(ColorType::Rgb),
+            CT_INDEXED => Some(ColorType::Indexed),
             CT_GRAYSCALE_ALPHA => Some(ColorType::GrayscaleAlpha),
-            CT_RGB_ALPHA       => Some(ColorType::RgbAlpha),
-            _                  => None
+            CT_RGB_ALPHA => Some(ColorType::RgbAlpha),
+            _ => None,
         }
     }
 }
@@ -56,25 +56,25 @@ fn compute_color_depth(bit_depth: u8, color_type: u8) -> Option<u8> {
     match color_type {
         CT_INDEXED => match bit_depth {
             1 | 2 | 4 | 8 => Some(bit_depth),
-            _ => None
+            _ => None,
         },
         CT_GRAYSCALE => match bit_depth {
             1 | 2 | 4 | 8 | 16 => Some(bit_depth),
             _ => None,
         },
         CT_GRAYSCALE_ALPHA => match bit_depth {
-            8 | 16 => Some(bit_depth*2),
-            _ => None
+            8 | 16 => Some(bit_depth * 2),
+            _ => None,
         },
         CT_RGB => match bit_depth {
-            8 | 16 => Some(bit_depth*3),
-            _ => None
+            8 | 16 => Some(bit_depth * 3),
+            _ => None,
         },
         CT_RGB_ALPHA => match bit_depth {
-            8 | 16 => Some(bit_depth*4),
-            _ => None
+            8 | 16 => Some(bit_depth * 4),
+            _ => None,
         },
-        _ => None
+        _ => None,
     }
 }
 
@@ -86,14 +86,14 @@ fn compute_color_depth(bit_depth: u8, color_type: u8) -> Option<u8> {
 /// at most 32768 bytes) is defined.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CompressionMethod {
-    DeflateInflate
+    DeflateInflate,
 }
 
 impl CompressionMethod {
     fn from_u8(n: u8) -> Option<CompressionMethod> {
         match n {
             0 => Some(CompressionMethod::DeflateInflate),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -106,14 +106,14 @@ impl CompressionMethod {
 /// defined.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FilterMethod {
-    AdaptiveFiltering
+    AdaptiveFiltering,
 }
 
 impl FilterMethod {
     fn from_u8(n: u8) -> Option<FilterMethod> {
         match n {
             0 => Some(FilterMethod::AdaptiveFiltering),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -124,7 +124,7 @@ impl FilterMethod {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum InterlaceMethod {
     Disabled,
-    Adam7
+    Adam7,
 }
 
 impl InterlaceMethod {
@@ -132,7 +132,7 @@ impl InterlaceMethod {
         match n {
             0 => Some(InterlaceMethod::Disabled),
             1 => Some(InterlaceMethod::Adam7),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -145,9 +145,11 @@ pub struct ChunkHeader {
 }
 
 impl ChunkHeader {
-    pub fn load<R: ?Sized + Read>(reader: &mut R) -> Result<ChunkHeader,PngError> {
+    pub fn load<R: ?Sized + Read>(reader: &mut R) -> Result<ChunkHeader, PngError> {
         let mut buffer = [0; 8];
-        try!(reader.read_exact(&mut buffer).map_err(|_| format_eof("when reading chunk data")));
+        reader
+            .read_exact(&mut buffer)
+            .map_err(|_| format_eof("when reading chunk data"))?;
         Ok(ChunkHeader {
             length: BigEndian::read_u32(&buffer[0..4]),
             chunk_type: [buffer[4], buffer[5], buffer[6], buffer[7]],
@@ -169,81 +171,100 @@ pub struct Metadata {
     /// Prediction method used in the image.
     pub filter_method: FilterMethod,
     /// Transmission order used in the image.
-    pub interlace_method: InterlaceMethod
+    pub interlace_method: InterlaceMethod,
 }
 
 impl Metadata {
-    pub fn load<R: ?Sized + Read>(r: &mut R) -> Result<Metadata,PngError> {
+    pub fn load<R: ?Sized + Read>(r: &mut R) -> Result<Metadata, PngError> {
         let mut buffer = [0u8; METADATA_SIZE];
-        try!(r.read_exact(&mut buffer).map_err(|_| format_eof("when reading metadata")));
+        r.read_exact(&mut buffer)
+            .map_err(|_| format_eof("when reading metadata"))?;
         let mut r = &buffer[..];
 
         let mut signature = [0u8; 8];
-        try!(r.read_exact(&mut signature).map_err(|_| format_eof("when reading PNG signature")));
+        r.read_exact(&mut signature)
+            .map_err(|_| format_eof("when reading PNG signature"))?;
 
         if &signature != b"\x89PNG\r\n\x1a\n" {
-            return Err(PngError::InvalidMetadata(format!("invalid PNG header: {:?}", signature)));
+            return Err(PngError::InvalidMetadata(format!(
+                "invalid PNG header: {:?}",
+                signature
+            )));
         }
 
         // chunk length
-        let chunk_header = try!(ChunkHeader::load(&mut r));
+        let chunk_header = ChunkHeader::load(&mut r)?;
         if &chunk_header.chunk_type != b"IHDR" {
-            return Err(PngError::InvalidMetadata(format!("invalid PNG chunk: {:?}",
-                                                         chunk_header.chunk_type)));
+            return Err(PngError::InvalidMetadata(format!(
+                "invalid PNG chunk: {:?}",
+                chunk_header.chunk_type
+            )));
         }
 
-        let width = try!(r.read_u32::<BigEndian>().map_byteorder_error("when reading width"));
-        let height = try!(r.read_u32::<BigEndian>().map_byteorder_error("when reading height"));
-        let bit_depth = try!(r.read_u8().map_byteorder_error("when reading bit depth"));
-        let color_type = try!(r.read_u8().map_byteorder_error("when reading color type"));
-        let compression_method =
-            try!(r.read_u8().map_byteorder_error("when reading compression method"));
-        let filter_method = try!(r.read_u8().map_byteorder_error("when reading filter method"));
-        let interlace_method =
-            try!(r.read_u8().map_byteorder_error("when reading interlace method"));
+        let width = r
+            .read_u32::<BigEndian>()
+            .map_byteorder_error("when reading width")?;
+        let height = r
+            .read_u32::<BigEndian>()
+            .map_byteorder_error("when reading height")?;
+        let bit_depth = r.read_u8().map_byteorder_error("when reading bit depth")?;
+        let color_type = r.read_u8().map_byteorder_error("when reading color type")?;
+        let compression_method = r
+            .read_u8()
+            .map_byteorder_error("when reading compression method")?;
+        let filter_method = r
+            .read_u8()
+            .map_byteorder_error("when reading filter method")?;
+        let interlace_method = r
+            .read_u8()
+            .map_byteorder_error("when reading interlace method")?;
 
-        drop(try!(r.read_u32::<BigEndian>().map_byteorder_error("when reading metadata CRC")));
+        drop(
+            r.read_u32::<BigEndian>()
+                .map_byteorder_error("when reading metadata CRC")?,
+        );
 
         Ok(Metadata {
             dimensions: Dimensions {
                 width: width,
                 height: height,
             },
-            color_type: try!(
-                ColorType::from_u8(color_type).ok_or(
-                    PngError::InvalidMetadata(format!("invalid color type: {}", color_type)))
-            ),
-            color_depth: try!(
-                compute_color_depth(bit_depth, color_type).ok_or(
-                    PngError::InvalidMetadata(format!("invalid bit depth: {}", bit_depth)))
-            ),
-            compression_method: try!(
-                CompressionMethod::from_u8(compression_method).ok_or(PngError::InvalidMetadata(
-                        format!("invalid compression method: {}", compression_method)))
-            ),
-            filter_method: try!(
-                FilterMethod::from_u8(filter_method).ok_or(PngError::InvalidMetadata(
-                        format!("invalid filter method: {}", filter_method)))
-            ),
-            interlace_method: try!(
-                InterlaceMethod::from_u8(interlace_method).ok_or(PngError::InvalidMetadata(
-                        format!("invalid interlace method: {}", interlace_method)))
-            )
+            color_type: ColorType::from_u8(color_type).ok_or(PngError::InvalidMetadata(
+                format!("invalid color type: {}", color_type),
+            ))?,
+            color_depth: compute_color_depth(bit_depth, color_type).ok_or(
+                PngError::InvalidMetadata(format!("invalid bit depth: {}", bit_depth)),
+            )?,
+            compression_method: CompressionMethod::from_u8(compression_method).ok_or(
+                PngError::InvalidMetadata(format!(
+                    "invalid compression method: {}",
+                    compression_method
+                )),
+            )?,
+            filter_method: FilterMethod::from_u8(filter_method).ok_or(
+                PngError::InvalidMetadata(format!("invalid filter method: {}", filter_method)),
+            )?,
+            interlace_method: InterlaceMethod::from_u8(interlace_method).ok_or(
+                PngError::InvalidMetadata(format!(
+                    "invalid interlace method: {}",
+                    interlace_method
+                )),
+            )?,
         })
     }
 }
 
 trait MapByteOrderError {
     type OkType;
-    fn map_byteorder_error(self, description: &'static str) -> Result<Self::OkType,PngError>;
+    fn map_byteorder_error(self, description: &'static str) -> Result<Self::OkType, PngError>;
 }
 
-impl<T> MapByteOrderError for byteorder::Result<T> {
+impl<T> MapByteOrderError for std::io::Result<T> {
     type OkType = T;
-    fn map_byteorder_error(self, description: &'static str) -> Result<Self::OkType,PngError> {
+    fn map_byteorder_error(self, description: &'static str) -> Result<Self::OkType, PngError> {
         match self {
-            Err(byteorder::Error::Io(io_error)) => Err(PngError::Io(io_error)),
-            Err(byteorder::Error::UnexpectedEOF) => Err(format_eof(description)),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Err(format_eof(description)),
+            Err(e) => Err(PngError::Io(e)),
             Ok(value) => Ok(value),
         }
     }
@@ -252,4 +273,3 @@ impl<T> MapByteOrderError for byteorder::Result<T> {
 fn format_eof(description: &'static str) -> PngError {
     PngError::InvalidMetadata(format!("unexpected end of file {}", description))
 }
-

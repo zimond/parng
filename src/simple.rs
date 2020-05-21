@@ -4,10 +4,14 @@
 
 //! A simple API that allocates an in-memory buffer and decodes into it.
 
-use PngError;
-use imageloader::{self, DataProvider, ImageLoader, InterlacingInfo, LevelOfDetail, LoadProgress};
-use imageloader::{ScanlinesForPrediction, ScanlinesForRgbaConversion, UninitializedExtension};
-use metadata::ColorType;
+use crate::imageloader::{
+    self, DataProvider, ImageLoader, InterlacingInfo, LevelOfDetail, LoadProgress,
+};
+use crate::imageloader::{
+    ScanlinesForPrediction, ScanlinesForRgbaConversion, UninitializedExtension,
+};
+use crate::metadata::ColorType;
+use crate::PngError;
 use std::io::{Read, Seek};
 use std::mem;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -54,12 +58,13 @@ impl MemoryDataProvider {
 }
 
 impl DataProvider for MemoryDataProvider {
-    fn fetch_scanlines_for_prediction<'a>(&'a mut self,
-                                          reference_scanline: Option<u32>,
-                                          current_scanline: u32,
-                                          lod: LevelOfDetail,
-                                          indexed: bool)
-                                          -> ScanlinesForPrediction {
+    fn fetch_scanlines_for_prediction<'a>(
+        &'a mut self,
+        reference_scanline: Option<u32>,
+        current_scanline: u32,
+        lod: LevelOfDetail,
+        indexed: bool,
+    ) -> ScanlinesForPrediction {
         let buffer_color_depth = buffer_color_depth(indexed);
         let reference_scanline = reference_scanline.map(|reference_scanline| {
             InterlacingInfo::new(reference_scanline, buffer_color_depth, lod)
@@ -84,15 +89,16 @@ impl DataProvider for MemoryDataProvider {
             None => None,
             Some(reference_scanline) => {
                 debug_assert!(current_scanline.stride == reference_scanline.stride);
-                let start = (reference_scanline.y as usize) * aligned_stride +
-                    (reference_scanline.offset as usize);
+                let start = (reference_scanline.y as usize) * aligned_stride
+                    + (reference_scanline.offset as usize);
                 let end = start + aligned_stride;
                 let slice = &mut head[start..end];
                 Some(slice)
             }
         };
-        let start = (current_scanline.y as usize) * aligned_stride +
-            (current_scanline.offset as usize) - head_length;
+        let start = (current_scanline.y as usize) * aligned_stride
+            + (current_scanline.offset as usize)
+            - head_length;
         let end = start + aligned_stride;
         let current_scanline_data = &mut tail[start..end];
         ScanlinesForPrediction {
@@ -104,11 +110,12 @@ impl DataProvider for MemoryDataProvider {
 
     fn prediction_complete_for_scanline(&mut self, _: u32, _: LevelOfDetail) {}
 
-    fn fetch_scanlines_for_rgba_conversion<'a>(&'a mut self,
-                                               scanline: u32,
-                                               lod: LevelOfDetail,
-                                               indexed: bool)
-                                               -> ScanlinesForRgbaConversion<'a> {
+    fn fetch_scanlines_for_rgba_conversion<'a>(
+        &'a mut self,
+        scanline: u32,
+        lod: LevelOfDetail,
+        indexed: bool,
+    ) -> ScanlinesForRgbaConversion<'a> {
         let rgba_scanline = InterlacingInfo::new(scanline, 32, lod);
         let indexed_scanline = if indexed {
             Some(InterlacingInfo::new(scanline, 8, lod))
@@ -132,7 +139,9 @@ impl DataProvider for MemoryDataProvider {
     fn rgba_conversion_complete_for_scanline(&mut self, _: u32, _: LevelOfDetail) {}
 
     fn finished(&mut self) {
-        self.data_sender.send(mem::replace(&mut self.rgba_pixels, vec![])).unwrap()
+        self.data_sender
+            .send(mem::replace(&mut self.rgba_pixels, vec![]))
+            .unwrap()
     }
 }
 
@@ -160,10 +169,13 @@ impl Image {
     /// This method does not return until the image is fully loaded. If you need a different
     /// in-memory representation, or you need to display the image before it's fully loaded,
     /// consider using the `imageloader::ImageLoader` API instead.
-    pub fn load<I>(input: &mut I) -> Result<Image, PngError> where I: Read + Seek {
+    pub fn load<I>(input: &mut I) -> Result<Image, PngError>
+    where
+        I: Read + Seek,
+    {
         let mut image = ImageLoader::new();
         loop {
-            match try!(image.add_data(input)) {
+            match image.add_data(input)? {
                 LoadProgress::NeedDataProviderAndMoreData => break,
                 LoadProgress::NeedMoreData => {}
                 LoadProgress::Finished => panic!("Image ended before metadata was read!"),
@@ -172,16 +184,18 @@ impl Image {
 
         let (dimensions, indexed) = {
             let metadata = image.metadata().as_ref().unwrap();
-            (metadata.dimensions, metadata.color_type == ColorType::Indexed)
+            (
+                metadata.dimensions,
+                metadata.color_type == ColorType::Indexed,
+            )
         };
-        let (data_provider, data_receiver) = MemoryDataProvider::new(dimensions.width,
-                                                                     dimensions.height,
-                                                                     indexed);
+        let (data_provider, data_receiver) =
+            MemoryDataProvider::new(dimensions.width, dimensions.height, indexed);
         let aligned_stride = data_provider.rgba_aligned_stride;
         image.set_data_provider(Box::new(data_provider));
 
-        while let LoadProgress::NeedMoreData = try!(image.add_data(input)) {}
-        try!(image.wait_until_finished());
+        while let LoadProgress::NeedMoreData = image.add_data(input)? {}
+        image.wait_until_finished()?;
 
         let pixels = data_receiver.recv().unwrap();
         Ok(Image {
@@ -200,4 +214,3 @@ fn buffer_color_depth(indexed: bool) -> u8 {
         32
     }
 }
-

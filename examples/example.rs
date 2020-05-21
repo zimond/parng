@@ -29,11 +29,15 @@ fn main() {
     println!("Elapsed time: {}ms", elapsed as f32 / 1_000_000.0);
 
     let mut output = BufWriter::new(File::create(out_path).unwrap());
-    output.write_all(&[0, 0, 2, 0,
-                       0, 0, 0, 0,
-                       0, 0, 0, 0]).unwrap();
-    output.write_u16::<LittleEndian>(image.width as u16).unwrap();
-    output.write_u16::<LittleEndian>(image.height as u16).unwrap();
+    output
+        .write_all(&[0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        .unwrap();
+    output
+        .write_u16::<LittleEndian>(image.width as u16)
+        .unwrap();
+    output
+        .write_u16::<LittleEndian>(image.height as u16)
+        .unwrap();
     output.write_all(&[24, 0]).unwrap();
 
     for y in 0..image.height {
@@ -60,4 +64,3 @@ fn main() {
         }
     }
 }
-

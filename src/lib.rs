@@ -7,26 +7,21 @@
 //! For the simple API, see the `simple` module. For the more complex but more flexible API, see
 //! the `imageloader` module.
 
-extern crate byteorder;
-extern crate flate2;
-extern crate libc;
-
+use flate2::DecompressError;
 use std::io;
 
 pub mod capi;
 pub mod imageloader;
 pub mod metadata;
-pub mod simple;
 mod prediction;
-
-#[cfg(test)]
-pub mod test;
+pub mod simple;
 
 /// Errors that can occur while decoding a PNG image.
 #[derive(Debug)]
 pub enum PngError {
     /// A Rust I/O error occurred. The wrapped error contains detailed information about the error.
     Io(io::Error),
+    Decompress(DecompressError),
     /// The image loader found image data to decode, but no data provider was attached.
     ///
     /// When `ImageLoader::add_data()` returns, if `ImageLoader::metadata()` returns a `Some`
@@ -43,3 +38,14 @@ pub enum PngError {
     EntropyDecodingError,
 }
 
+impl From<DecompressError> for PngError {
+    fn from(e: DecompressError) -> Self {
+        PngError::Decompress(e)
+    }
+}
+
+impl From<io::Error> for PngError {
+    fn from(e: io::Error) -> Self {
+        PngError::Io(e)
+    }
+}
